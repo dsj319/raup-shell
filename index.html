@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Amherst Shell Lab - v2.6.3 (Morphospace Inset Draggable)</title>
+  <style>
+    body { margin: 0; overflow: hidden; background-color: #111; font-family: 'Segoe UI', sans-serif; }
+
+    #overlay{
+      position:absolute; top:15px; left:15px; color:#fff;
+      background:rgba(0,0,0,0.85); padding:14px 14px 10px 14px;
+      border-radius:10px; border:1px solid #555; max-width: 520px;
+      pointer-events:none;
+    }
+    #overlay h3 { margin:0 0 6px 0; font-size:16px; }
+    #overlay .sub{ font-size:12px; opacity:0.9; margin-bottom:10px; }
+    #overlay .row{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+    #overlay .pill{
+      display:inline-block; padding:2px 8px; border:1px solid rgba(255,255,255,0.15);
+      border-radius:999px; font-size:11px; opacity:0.95;
+    }
+    #overlay .help{
+      font-size:12px; line-height:1.25; opacity:0.92;
+      border-top:1px solid rgba(255,255,255,0.12); padding-top:8px;
+    }
+    #overlay code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+
+    /* Morphospace inset canvas (moved to bottom-left) */
+    #morphInset {
+      position: absolute;
+      left: 15px;
+      bottom: 15px;
+      width: 250px;
+      height: 250px;
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 10px;
+      background: rgba(15,15,15,0.95);
+      pointer-events: auto; /* allow dragging */
+      box-shadow: 0 8px 22px rgba(0,0,0,0.35);
+    }
+
+    /* Keep overlay above inset if they ever overlap */
+    #overlay { z-index: 5; }
+    #morphInset { z-index: 4; }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <h3>Raup Shell Morphology</h3>
+    <div class="sub">Amherst College Paleontology Lab</div>
+
+    <div class="row">
+      <span class="pill">W: whorl expansion rate</span>
+      <span class="pill">D: distance from axis</span>
+      <span class="pill">T: spire rise</span>
+      <span class="pill">S: cross-section squish</span>
+    </div>
+
+    <div class="help">
+      <code id="wReadout">W = —</code> • <code id="revsReadout">revs = —</code><br/>
+      Morphospace inset: <b>logW–D–T</b> (normalized). <b>S held constant</b>.<br/>
+      Tip: use <b>Frame</b> if the shell drifts out of view.
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GUI } from 'lil-gui';
+
+    // -----------------------------
+    // Scene, camera, renderer (main)
+    // -----------------------------
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x111111);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 30000);
+    camera.position.set(110, 70, 110);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.setClearColor(0x111111, 1);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.8);
+    const dir = new THREE.DirectionalLight(0xffffff, 2.2);
+    dir.position.set(140, 160, 90);
+    scene.add(hemi, dir);
+
+    const axesHelper = new THREE.AxesHelper(60);
+    const gridHelper = new THREE.GridHelper(400, 40, 0x444444, 0x222222);
+    gridHelper.position.y = -40;
+    scene.add(axesHelper, gridHelper);
+
+    // -----------------------------
+    // Parameters + guardrails
+    // -----------------------------
+    const CLAMPS = {
+      logW: [0.00, 4.00],
+      D:    [1.00, 5.00],
+      T:    [0.00, 10.0],
+      S:    [0.10, 3.00],
+      septaSpacing: [5, 90],
+      BodyOccupancy: [30, 300],
+      startRevs: [-6.0, 0.0],
+      ontogenyRevs: [0.00, 15.0],
+      animSpeed: [0.2, 6.0]
+    };
+
+    const params = {
+      logW: 0.54, D: 1.0, T: 0.0, S: 1.2,
+      startRevs: -1.0,
+      ontogenyRevs: 3.0,
+      BodyOccupancy: 180,
+      showSepta: true,
+      septaSpacing: 30,
+      showCenterOfMass: true,
+      exterior: 'Solid',
+      shellColor: '#e3d5b8',
+      septaColor: '#a0b0c0',
+      showAxes: true,
+      showGrid: true,
+      animSpeed: 1.5,
+      preset: 'Nautilus (Cephalopod)'
+    };
+
+    const presets = {
+      'Nautilus (Cephalopod)':   { logW: 0.54, D: 1.0, T: 0.0, S: 1.2, startRevs: -1.0, ontogenyRevs: 3.0,  showSepta: true,  BodyOccupancy: 180 },
+      'Turritella (High-Spire)': { logW: 0.06, D: 1.1, T: 3.5, S: 1.0, startRevs: -0.5, ontogenyRevs: 12.0, showSepta: false, BodyOccupancy: 180 },
+      'Conus (Low-Spire)':       { logW: 0.15, D: 1.0, T: 0.5, S: 1.0, startRevs: -0.5, ontogenyRevs: 6.0,  showSepta: false, BodyOccupancy: 180 },
+      'Bivalve (Clam)':          { logW: 3.5,  D: 2.0, T: 1.5, S: 1.0, startRevs: -0.25,ontogenyRevs: 0.4,  showSepta: false, BodyOccupancy: 180 },
+      'Ammonite (Planispiral)':  { logW: 0.4,  D: 1.0, T: 0.0, S: 0.8, startRevs: -1.0, ontogenyRevs: 6.0,  showSepta: true,  BodyOccupancy: 180 },
+      'Epitonium (Open Coil)':   { logW: 0.11, D: 2.5, T: 2.0, S: 1.0, startRevs: -0.6, ontogenyRevs: 7.0,  showSepta: false, BodyOccupancy: 180 }
+    };
+
+    function clamp(key, val) {
+      const [mn, mx] = CLAMPS[key] || [-Infinity, Infinity];
+      return Math.min(mx, Math.max(mn, val));
+    }
+
+    function applyHardClamps() {
+      params.logW = clamp('logW', params.logW);
+      params.D = clamp('D', params.D);
+      params.T = clamp('T', params.T);
+      params.S = clamp('S', params.S);
+      params.septaSpacing = clamp('septaSpacing', params.septaSpacing);
+      params.BodyOccupancy = clamp('BodyOccupancy', params.BodyOccupancy);
+      params.startRevs = clamp('startRevs', params.startRevs);
+      params.ontogenyRevs = clamp('ontogenyRevs', params.ontogenyRevs);
+      params.animSpeed = clamp('animSpeed', params.animSpeed);
+      if (params.ontogenyRevs < params.startRevs) params.ontogenyRevs = params.startRevs;
+    }
+
+    // -----------------------------
+    // Morphospace inset (secondary scene + separate renderer)
+    // -----------------------------
+    const morphScene = new THREE.Scene();
+    morphScene.background = new THREE.Color(0x0f0f0f);
+
+    const morphCamera = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
+    morphCamera.position.set(2.2, 1.8, 2.6);
+    morphCamera.lookAt(0, 0, 0);
+
+    morphScene.add(new THREE.AmbientLight(0xffffff, 0.9));
+
+    const CUBE_SIZE = 2.0;
+
+    const cubeGeom = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
+    const cubeEdges = new THREE.EdgesGeometry(cubeGeom);
+    const cubeLines = new THREE.LineSegments(
+      cubeEdges,
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.65 })
+    );
+    morphScene.add(cubeLines);
+
+    const morphAxes = new THREE.AxesHelper(1.35);
+    morphScene.add(morphAxes);
+
+    const currentPoint = new THREE.Mesh(
+      new THREE.SphereGeometry(0.045, 20, 14),
+      new THREE.MeshBasicMaterial({ color: 0x00ccff })
+    );
+    morphScene.add(currentPoint);
+
+    const presetGroup = new THREE.Group();
+    morphScene.add(presetGroup);
+
+    function makeTextSprite(
+      text,
+      {
+        fontSize = 30,
+        padding = 10,
+        color = 'rgba(255,230,180,0.92)',
+        bg = 'rgba(0,0,0,0.30)',
+        scale = 0.38
+      } = {}
+    ) {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      ctx.font = `${fontSize}px Segoe UI, Arial, sans-serif`;
+      const metrics = ctx.measureText(text);
+      const textW = Math.ceil(metrics.width);
+      const textH = Math.ceil(fontSize * 1.15);
+
+      canvas.width = textW + padding * 2;
+      canvas.height = textH + padding * 2;
+
+      ctx.font = `${fontSize}px Segoe UI, Arial, sans-serif`;
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = color;
+      ctx.fillText(text, padding, padding);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+
+      const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+      const sprite = new THREE.Sprite(material);
+
+      sprite.renderOrder = 999;
+
+      sprite.scale.set(scale * (canvas.width / canvas.height), scale, 1);
+      return sprite;
+    }
+
+    // Axis labels (smaller)
+    const labelLogW = makeTextSprite('logW', { fontSize: 34, padding: 10, color: 'rgba(255,255,255,0.92)', scale: 0.42 });
+    const labelD    = makeTextSprite('D',    { fontSize: 34, padding: 10, color: 'rgba(255,255,255,0.92)', scale: 0.42 });
+    const labelT    = makeTextSprite('T',    { fontSize: 34, padding: 10, color: 'rgba(255,255,255,0.92)', scale: 0.42 });
+
+    labelLogW.position.set(+CUBE_SIZE/2 + 0.25, -CUBE_SIZE/2 - 0.02, -CUBE_SIZE/2 - 0.02);
+    labelD.position.set(-CUBE_SIZE/2 - 0.18, +CUBE_SIZE/2 + 0.22, -CUBE_SIZE/2 - 0.02);
+    labelT.position.set(-CUBE_SIZE/2 - 0.18, -CUBE_SIZE/2 - 0.02, +CUBE_SIZE/2 + 0.22);
+
+    morphScene.add(labelLogW, labelD, labelT);
+
+    function norm01(v, mn, mx) { return (mx === mn) ? 0.5 : (v - mn) / (mx - mn); }
+    function toCubeCoord(t01) { return (t01 - 0.5) * CUBE_SIZE; }
+
+    function pointFromParams(p) {
+      const x01 = norm01(p.logW, CLAMPS.logW[0], CLAMPS.logW[1]);
+      const y01 = norm01(p.D,    CLAMPS.D[0],    CLAMPS.D[1]);
+      const z01 = norm01(p.T,    CLAMPS.T[0],    CLAMPS.T[1]);
+      return new THREE.Vector3(toCubeCoord(x01), toCubeCoord(y01), toCubeCoord(z01));
+    }
+
+    function rebuildPresetPoints() {
+      while (presetGroup.children.length > 0) {
+        const ch = presetGroup.children.pop();
+        if (ch.geometry) ch.geometry.dispose();
+        if (ch.material) {
+          if (Array.isArray(ch.material)) ch.material.forEach(m => m.dispose());
+          else ch.material.dispose();
+        }
+      }
+
+      const dotGeom = new THREE.SphereGeometry(0.028, 14, 10);
+
+      Object.entries(presets).forEach(([name, p], idx) => {
+        const pos = pointFromParams(p);
+
+        const dot = new THREE.Mesh(dotGeom, new THREE.MeshBasicMaterial({ color: 0xffcc66 }));
+        dot.position.copy(pos);
+
+        const shortName = name
+          .replace(' (Cephalopod)', '')
+          .replace(' (High-Spire)', '')
+          .replace(' (Low-Spire)', '')
+          .replace(' (Clam)', '')
+          .replace(' (Planispiral)', '')
+          .replace(' (Open Coil)', '');
+
+        // smaller labels + slightly different offsets to reduce collisions
+        const spr = makeTextSprite(shortName, { fontSize: 28, padding: 10, scale: 0.34 });
+        const jitter = (idx % 3) * 0.03;
+        spr.position.copy(pos.clone().add(new THREE.Vector3(0.10 + jitter, 0.06, 0.08 - jitter)));
+
+        presetGroup.add(dot, spr);
+      });
+    }
+
+    function updateMorphospacePoint() {
+      currentPoint.position.copy(pointFromParams(params));
+    }
+
+    rebuildPresetPoints();
+    updateMorphospacePoint();
+
+    // Create inset renderer canvas (separate)
+    const insetRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    insetRenderer.domElement.id = 'morphInset';
+    insetRenderer.setClearColor(0x0f0f0f, 1);
+    insetRenderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(insetRenderer.domElement);
+
+    // Orbit controls for inset (drag to rotate)
+    const morphControls = new OrbitControls(morphCamera, insetRenderer.domElement);
+    morphControls.enableDamping = true;
+    morphControls.dampingFactor = 0.08;
+    morphControls.enablePan = false;
+    morphControls.enableZoom = true;
+    morphControls.minDistance = 1.6;
+    morphControls.maxDistance = 6.0;
+    morphControls.target.set(0, 0, 0);
+    morphControls.update();
+
+    function resizeInset() {
+      const pr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = insetRenderer.domElement.clientWidth || 250;
+      const h = insetRenderer.domElement.clientHeight || 250;
+      insetRenderer.setPixelRatio(pr);
+      insetRenderer.setSize(w, h, false);
+      morphCamera.aspect = w / h;
+      morphCamera.updateProjectionMatrix();
+    }
+    resizeInset();
+
+    // -----------------------------
+    // Shell model (v2.5 logic)
+    // -----------------------------
+    let shellMesh = null;
+    let comMarker = null;
+    const septaGroup = new THREE.Group();
+    scene.add(septaGroup);
+
+    function disposeMesh(obj) {
+      if (!obj) return;
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+        else obj.material.dispose();
+      }
+    }
+    function clearGroup(g) {
+      while (g.children.length > 0) {
+        const child = g.children.pop();
+        disposeMesh(child);
+      }
+    }
+
+    let isDragging = false;
+    let isAnimating = false;
+    let animCurrentEndRevs = 0.0;
+    let lastRebuildMs = 0;
+
+    function getResolution(preview, revSpan) {
+      const span = Math.max(0.01, revSpan);
+      const baseTheta = Math.floor(150 * span);
+      const basePhi = 50;
+      if (!preview) return { segTheta: baseTheta, segPhi: basePhi };
+      return { segTheta: Math.max(30, Math.floor(baseTheta * 0.45)), segPhi: Math.max(14, Math.floor(basePhi * 0.55)) };
+    }
+
+    function applyColorsImmediately() {
+      if (shellMesh && shellMesh.material) {
+        shellMesh.material.color.set(params.shellColor);
+        shellMesh.material.needsUpdate = true;
+      }
+      for (const child of septaGroup.children) {
+        if (child.material) {
+          child.material.color.set(params.septaColor);
+          child.material.needsUpdate = true;
+        }
+      }
+    }
+
+    function softBodyWeight(thetaDegAbs, bodyStartDegAbs, bodyEndDegAbs) {
+      const occ = Math.max(1e-6, bodyEndDegAbs - bodyStartDegAbs);
+      const f = (thetaDegAbs - bodyStartDegAbs) / occ;
+      const ff = Math.min(1, Math.max(0, f));
+      return 0.15 + 0.85 * Math.pow(ff, 2.0);
+    }
+
+    function updateModel(preview = false, endRevsOverride = null) {
+      applyHardClamps();
+
+      const startRevs = params.startRevs;
+      const endRevs = (endRevsOverride === null) ? params.ontogenyRevs : endRevsOverride;
+
+      if (shellMesh) { scene.remove(shellMesh); disposeMesh(shellMesh); shellMesh = null; }
+      if (comMarker) { scene.remove(comMarker); disposeMesh(comMarker); comMarker = null; }
+      clearGroup(septaGroup);
+
+      const W = Math.pow(10, params.logW);
+      document.getElementById('wReadout').textContent = `W = ${W.toFixed(3)} (logW=${params.logW.toFixed(2)})`;
+      document.getElementById('revsReadout').textContent = `revs: ${startRevs.toFixed(2)} → ${endRevs.toFixed(2)}`;
+
+      const revSpan = Math.max(0, endRevs - startRevs);
+      if (revSpan <= 1e-6) return;
+
+      const theta0 = 2 * Math.PI * startRevs;
+      const theta1 = 2 * Math.PI * endRevs;
+
+      const { segTheta, segPhi } = getResolution(preview, revSpan);
+
+      const vertCount = (segTheta + 1) * (segPhi + 1);
+      const vertices = new Float32Array(vertCount * 3);
+      const indices = new Uint32Array(segTheta * segPhi * 6);
+
+      let sumX = 0, sumY = 0, sumZ = 0, sumWgt = 0;
+      let maxR = 1;
+
+      const endDegAbs = 360 * endRevs;
+      const effectiveBodyOcc = Math.min(params.BodyOccupancy, Math.max(0, (360 * revSpan) - 5));
+      const bodyStartDegAbs = endDegAbs - effectiveBodyOcc;
+
+      let v = 0;
+      for (let i = 0; i <= segTheta; i++) {
+        const t = i / segTheta;
+        const theta = theta0 + t * (theta1 - theta0);
+        const r = Math.pow(W, theta / (2 * Math.PI));
+        if (r > maxR) maxR = r;
+
+        const thetaDegAbs = 360 * (theta / (2 * Math.PI));
+        const cosT = Math.cos(theta);
+        const sinT = Math.sin(theta);
+        const zSpire = params.T * r * (theta / (2 * Math.PI));
+
+        for (let j = 0; j <= segPhi; j++) {
+          const phi = (j / segPhi) * Math.PI * 2;
+          const cosP = Math.cos(phi);
+          const sinP = Math.sin(phi);
+
+          const x_a = cosP * r;
+          const y_a = sinP * r * params.S;
+
+          const x = (x_a + params.D * r) * cosT;
+          const y = (x_a + params.D * r) * sinT;
+          const z = y_a + zSpire;
+
+          vertices[v++] = x;
+          vertices[v++] = y;
+          vertices[v++] = z;
+
+          if (params.showCenterOfMass && thetaDegAbs >= bodyStartDegAbs) {
+            const wgt = softBodyWeight(thetaDegAbs, bodyStartDegAbs, endDegAbs);
+            sumX += wgt * x; sumY += wgt * y; sumZ += wgt * z;
+            sumWgt += wgt;
+          }
+        }
+      }
+
+      let idx = 0;
+      for (let i = 0; i < segTheta; i++) {
+        for (let j = 0; j < segPhi; j++) {
+          const a = i * (segPhi + 1) + j;
+          const b = (i + 1) * (segPhi + 1) + j;
+          const c = (i + 1) * (segPhi + 1) + (j + 1);
+          const d = i * (segPhi + 1) + (j + 1);
+          indices[idx++] = a; indices[idx++] = b; indices[idx++] = d;
+          indices[idx++] = b; indices[idx++] = c; indices[idx++] = d;
+        }
+      }
+
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+      geom.setIndex(new THREE.BufferAttribute(indices, 1));
+      geom.computeVertexNormals();
+      geom.computeBoundingSphere();
+
+      const wantWire = (params.exterior === 'Wireframe');
+
+      const shellMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(params.shellColor),
+        side: THREE.DoubleSide,
+        wireframe: wantWire,
+        transparent: wantWire,
+        opacity: wantWire ? 0.35 : 1.0,
+        roughness: 0.7,
+        metalness: 0.05
+      });
+
+      shellMesh = new THREE.Mesh(geom, shellMat);
+      scene.add(shellMesh);
+
+      if (params.showSepta) {
+        const spacingRad = (params.septaSpacing * Math.PI) / 180;
+        const limitThetaAbs = theta1 - (effectiveBodyOcc * Math.PI / 180);
+        const thetaStartForSepta = theta0 + spacingRad;
+        const shrink = 0.985;
+
+        for (let thetaAbs = thetaStartForSepta; thetaAbs <= limitThetaAbs; thetaAbs += spacingRad) {
+          const frac = (thetaAbs - theta0) / (theta1 - theta0);
+          const i = Math.min(segTheta, Math.max(0, Math.round(frac * segTheta)));
+
+          const ring = [];
+          for (let j = 0; j <= segPhi; j++) {
+            const k = (i * (segPhi + 1) + j) * 3;
+            ring.push(new THREE.Vector3(vertices[k], vertices[k + 1], vertices[k + 2]));
+          }
+
+          const center = new THREE.Vector3(0, 0, 0);
+          for (const p of ring) center.add(p);
+          center.divideScalar(ring.length);
+
+          for (let j = 0; j < ring.length; j++) ring[j].lerp(center, 1 - shrink);
+
+          const ringCount = ring.length - 1;
+          const sVerts = new Float32Array((ringCount + 2) * 3);
+          const sIdx = new Uint32Array(ringCount * 3);
+
+          sVerts[0] = center.x; sVerts[1] = center.y; sVerts[2] = center.z;
+          for (let j = 0; j <= ringCount; j++) {
+            const p = ring[j];
+            const base = (j + 1) * 3;
+            sVerts[base] = p.x; sVerts[base + 1] = p.y; sVerts[base + 2] = p.z;
+          }
+          for (let j = 0; j < ringCount; j++) {
+            sIdx[j * 3 + 0] = 0;
+            sIdx[j * 3 + 1] = j + 1;
+            sIdx[j * 3 + 2] = j + 2;
+          }
+
+          const sGeom = new THREE.BufferGeometry();
+          sGeom.setAttribute('position', new THREE.BufferAttribute(sVerts, 3));
+          sGeom.setIndex(new THREE.BufferAttribute(sIdx, 1));
+          sGeom.computeVertexNormals();
+
+          const sMat = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(params.septaColor),
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.82,
+            roughness: 0.85,
+            metalness: 0.0
+          });
+
+          septaGroup.add(new THREE.Mesh(sGeom, sMat));
+        }
+      }
+
+      if (params.showCenterOfMass && sumWgt > 0) {
+        const comX = sumX / sumWgt;
+        const comY = sumY / sumWgt;
+        const comZ = sumZ / sumWgt;
+
+        const comGeom = new THREE.SphereGeometry(maxR * 0.05, 24, 16);
+        const comMat = new THREE.MeshStandardMaterial({
+          color: 0x00ccff,
+          emissive: 0x0044ff,
+          emissiveIntensity: 0.7,
+          roughness: 0.4,
+          metalness: 0.0
+        });
+        comMarker = new THREE.Mesh(comGeom, comMat);
+        comMarker.position.set(comX, comY, comZ);
+        scene.add(comMarker);
+      }
+
+      updateMorphospacePoint();
+    }
+
+    function frameModel() {
+      if (!shellMesh || !shellMesh.geometry) return;
+      shellMesh.geometry.computeBoundingSphere();
+      const bs = shellMesh.geometry.boundingSphere;
+      if (!bs) return;
+
+      const center = bs.center.clone();
+      const radius = bs.radius;
+      const viewDir = new THREE.Vector3(1, 0.65, 1).normalize();
+
+      const fov = THREE.MathUtils.degToRad(camera.fov);
+      const dist = radius / Math.sin(fov / 2);
+
+      controls.target.copy(center);
+      camera.position.copy(center.clone().add(viewDir.multiplyScalar(dist * 1.20)));
+
+      camera.near = Math.max(0.1, dist / 200);
+      camera.far  = Math.max(2000, dist * 12);
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+
+    function downloadPNG() {
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      a.download = `raup_shell_${stamp}.png`;
+      a.href = renderer.domElement.toDataURL('image/png');
+      a.click();
+    }
+
+    function animateOntogenyStart() {
+      applyHardClamps();
+      isAnimating = true;
+      animCurrentEndRevs = params.startRevs;
+      updateModel(true, animCurrentEndRevs);
+    }
+    function animateOntogenyStop() {
+      isAnimating = false;
+      updateModel(false, params.ontogenyRevs);
+    }
+
+    // -----------------------------
+    // GUI
+    // -----------------------------
+    const gui = new GUI();
+
+    gui.add(params, 'preset', Object.keys(presets)).name('Preset').onChange(v => {
+      Object.assign(params, presets[v]);
+      gui.controllersRecursive().forEach(c => c.updateDisplay());
+      updateModel(false);
+      frameModel();
+      updateMorphospacePoint();
+    });
+
+    const mf = gui.addFolder('Morphology');
+    const cLogW = mf.add(params, 'logW', CLAMPS.logW[0], CLAMPS.logW[1]).name('logW (W Expansion)');
+    const cD    = mf.add(params, 'D',    CLAMPS.D[0],    CLAMPS.D[1]).name('D (Distance)');
+    const cT    = mf.add(params, 'T',    CLAMPS.T[0],    CLAMPS.T[1]).name('T (Spire Height)');
+    const cS    = mf.add(params, 'S',    CLAMPS.S[0],    CLAMPS.S[1]).name('S (Shape)');
+
+    const s = gui.addFolder('Internal Architecture');
+    const cSepta = s.add(params, 'showSepta').name('Show Septa');
+    const cSpace = s.add(params, 'septaSpacing', CLAMPS.septaSpacing[0], CLAMPS.septaSpacing[1], 1).name('Septa spacing (°)');
+
+    const b = gui.addFolder('Biology & Visuals');
+    const cStart = b.add(params, 'startRevs', CLAMPS.startRevs[0], CLAMPS.startRevs[1], 0.05).name('Start revs');
+    const cEnd   = b.add(params, 'ontogenyRevs', CLAMPS.ontogenyRevs[0], CLAMPS.ontogenyRevs[1], 0.05).name('Ontogeny (end revs)');
+    b.add(params, 'BodyOccupancy', { '90°': 90, '180°': 180 }).name('Living chamber (°)');
+    const cCOM   = b.add(params, 'showCenterOfMass').name('Show Center of Mass');
+    b.add({ 'Animate ontogeny': animateOntogenyStart }, 'Animate ontogeny');
+    b.add({ 'Stop animation': animateOntogenyStop }, 'Stop animation');
+    b.add(params, 'animSpeed', CLAMPS.animSpeed[0], CLAMPS.animSpeed[1], 0.1).name('Anim speed (rev/s)');
+
+    const disp = gui.addFolder('Display');
+    const cExterior = disp.add(params, 'exterior', ['Solid', 'Wireframe']).name('Exterior');
+    const cShellCol = disp.addColor(params, 'shellColor').name('Shell color');
+    const cSeptaCol = disp.addColor(params, 'septaColor').name('Septa color');
+
+    const view = gui.addFolder('View');
+    view.add(params, 'showAxes').name('Axes').onChange(() => { axesHelper.visible = !!params.showAxes; });
+    view.add(params, 'showGrid').name('Grid').onChange(() => { gridHelper.visible = !!params.showGrid; });
+    view.add({ Frame: frameModel }, 'Frame');
+    view.add({ 'Save PNG': downloadPNG }, 'Save PNG');
+
+    axesHelper.visible = true;
+    gridHelper.visible = true;
+
+    function wireDrag(controller) {
+      controller.onChange(() => { isDragging = true; if (!isAnimating) updateModel(true); });
+      controller.onFinishChange(() => { isDragging = false; if (!isAnimating) updateModel(false); });
+    }
+    [cLogW, cD, cT, cS, cSpace, cStart, cEnd].forEach(wireDrag);
+
+    [cSepta, cCOM, cExterior].forEach(c => c.onChange(() => { if (!isAnimating) updateModel(isDragging); }));
+    [cShellCol, cSeptaCol].forEach(c => c.onChange(() => applyColorsImmediately()));
+
+    // Keep inset dot responsive
+    [cLogW, cD, cT].forEach(c => c.onChange(() => updateMorphospacePoint()));
+
+    updateModel(false);
+    frameModel();
+
+    function resizeMain() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      resizeInset();
+    }
+    window.addEventListener('resize', resizeMain);
+
+    // -----------------------------
+    // Render loop: main + inset
+    // -----------------------------
+    let lastTs = performance.now();
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const now = performance.now();
+      const dt = (now - lastTs) / 1000;
+      lastTs = now;
+
+      if (isAnimating) {
+        applyHardClamps();
+        const target = params.ontogenyRevs;
+        animCurrentEndRevs += params.animSpeed * dt;
+
+        if (animCurrentEndRevs >= target) {
+          animCurrentEndRevs = target;
+          isAnimating = false;
+          updateModel(false, animCurrentEndRevs);
+        } else {
+          if (now - lastRebuildMs > 60) {
+            lastRebuildMs = now;
+            updateModel(true, animCurrentEndRevs);
+          }
+        }
+      }
+
+      controls.update();
+      morphControls.update();
+
+      renderer.render(scene, camera);
+      insetRenderer.render(morphScene, morphCamera);
+    }
+    animate();
+  </script>
+</body>
+</html>
