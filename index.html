@@ -164,7 +164,7 @@
     const presets = {
       'Turritella (High-Spire)': { logW: 0.06, D: 1.1, T: 3.5, S: 1.0, startRevs: -0.5, ontogenyRevs: 12.0, showGrowthLines: true, showSepta: false, BodyOccupancy: 180 },
       'Conus (Low-Spire)':       { logW: 0.15, D: 1.0, T: 0.5, S: 1.0, startRevs: -0.5, ontogenyRevs: 6.0,  showGrowthLines: true, showSepta: false, BodyOccupancy: 180 },
-      'Bivalve (Clam)':          { logW: 3.0,  D: 1.0, T: 0.0, S: 0.9, startRevs: -0.1,ontogenyRevs: 0.3,  showGrowthLines: true, showSepta: false, BodyOccupancy: 180 },
+      'Bivalve (Clam)':          { logW: 3.0,  D: 1.0, T: 0.0, S: 0.9, startRevs: -0.3,ontogenyRevs: 0.3,  showGrowthLines: true, showSepta: false, BodyOccupancy: 180 },
       'Ammonite (Planispiral)':  { logW: 0.4,  D: 2.0, T: 0.0, S: 0.7, startRevs: 0.0, ontogenyRevs: 4.0,  showGrowthLines: true, showSepta: true,  BodyOccupancy: 180 },
       'Epitonium (Open Coil)':   { logW: 0.11, D: 2.5, T: 2.0, S: 1.0, startRevs: -0.6, ontogenyRevs: 7.0,  showGrowthLines: true, showSepta: false, BodyOccupancy: 180 }
     };
@@ -646,13 +646,13 @@
     // -----------------------------
     const gui = new GUI();
 
-    gui.add(params, 'preset', Object.keys(presets)).name('Preset').onChange(v => {
+    /* ggui.add(params, 'preset', Object.keys(presets)).name('Preset').onChange(v => {
       Object.assign(params, presets[v]);
       gui.controllersRecursive().forEach(c => c.updateDisplay());
       updateModel(false);
       frameModel();
       updateMorphospacePoint();
-    });
+    });*/
 
     const mf = gui.addFolder('Morphology');
     const cLogW = mf.add(params, 'logW', CLAMPS.logW[0], CLAMPS.logW[1]).name('logW (W Expansion)');
