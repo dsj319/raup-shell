@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Amherst Shell Lab - v2.6.3 (Morphospace Inset Draggable)</title>
+  <title>Amherst Shell Lab - v2.8.0 (Growth Lines + Headlight Fix + Inset Zoom)</title>
   <style>
     body { margin: 0; overflow: hidden; background-color: #111; font-family: 'Segoe UI', sans-serif; }
 
@@ -25,7 +25,7 @@
     }
     #overlay code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
 
-    /* Morphospace inset canvas (moved to bottom-left) */
+    /* Morphospace inset canvas (bottom-left) */
     #morphInset {
       position: absolute;
       left: 15px;
@@ -39,7 +39,6 @@
       box-shadow: 0 8px 22px rgba(0,0,0,0.35);
     }
 
-    /* Keep overlay above inset if they ever overlap */
     #overlay { z-index: 5; }
     #morphInset { z-index: 4; }
   </style>
@@ -66,8 +65,8 @@
   <script type="importmap">
   {
     "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
       "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm"
     }
   }
@@ -76,6 +75,7 @@
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
     import { GUI } from 'lil-gui';
 
     // -----------------------------
@@ -86,6 +86,7 @@
 
     const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 30000);
     camera.position.set(110, 70, 110);
+    scene.add(camera); // Required because headlight will be attached to camera
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -96,13 +97,28 @@
     renderer.setClearColor(0x111111, 1);
     document.body.appendChild(renderer.domElement);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
+    // TrackballControls removes the polar limit of OrbitControls for free tumbling
+    const controls = new TrackballControls(camera, renderer.domElement);
+    controls.rotateSpeed = 2.5;
+    controls.zoomSpeed = 1.2;
+    controls.panSpeed = 0.8;
+    controls.dynamicDampingFactor = 0.15;
 
+    // Fixed Lighting
     const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.8);
     const dir = new THREE.DirectionalLight(0xffffff, 2.2);
     dir.position.set(140, 160, 90);
     scene.add(hemi, dir);
+
+    // Headlight Lighting (Directional over the shoulder to preserve shadows/texture)
+    const headlight = new THREE.DirectionalLight(0xffffff, 2.0);
+    headlight.position.set(1, 1, 1); 
+    camera.add(headlight); 
+    camera.add(headlight.target); // Target must also track with camera
+    headlight.target.position.set(0, 0, -1); // Point straight ahead from camera
+    
+    const ambientForHeadlight = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientForHeadlight);
 
     const axesHelper = new THREE.AxesHelper(60);
     const gridHelper = new THREE.GridHelper(400, 40, 0x444444, 0x222222);
@@ -117,6 +133,7 @@
       D:    [1.00, 5.00],
       T:    [0.00, 10.0],
       S:    [0.10, 3.00],
+      growthLineSpacing: [1, 90],
       septaSpacing: [5, 90],
       BodyOccupancy: [30, 300],
       startRevs: [-6.0, 0.0],
@@ -125,29 +142,31 @@
     };
 
     const params = {
-      logW: 0.54, D: 1.0, T: 0.0, S: 1.2,
-      startRevs: -1.0,
-      ontogenyRevs: 3.0,
+      logW: 0.4, D: 2.0, T: 0.0, S: 0.7,
+      startRevs: 0.0,
+      ontogenyRevs: 4.0,
       BodyOccupancy: 180,
+      showGrowthLines: true,
+      growthLineSpacing: 10,
       showSepta: true,
       septaSpacing: 30,
-      showCenterOfMass: true,
       exterior: 'Solid',
       shellColor: '#e3d5b8',
+      growthLineColor: '#0a0a0a',
       septaColor: '#a0b0c0',
       showAxes: true,
       showGrid: true,
+      useHeadlight: false,
       animSpeed: 1.5,
-      preset: 'Nautilus (Cephalopod)'
+      preset: 'Ammonite (Planispiral)'
     };
 
     const presets = {
-      'Nautilus (Cephalopod)':   { logW: 0.54, D: 1.0, T: 0.0, S: 1.2, startRevs: -1.0, ontogenyRevs: 3.0,  showSepta: true,  BodyOccupancy: 180 },
-      'Turritella (High-Spire)': { logW: 0.06, D: 1.1, T: 3.5, S: 1.0, startRevs: -0.5, ontogenyRevs: 12.0, showSepta: false, BodyOccupancy: 180 },
-      'Conus (Low-Spire)':       { logW: 0.15, D: 1.0, T: 0.5, S: 1.0, startRevs: -0.5, ontogenyRevs: 6.0,  showSepta: false, BodyOccupancy: 180 },
-      'Bivalve (Clam)':          { logW: 3.5,  D: 2.0, T: 1.5, S: 1.0, startRevs: -0.25,ontogenyRevs: 0.4,  showSepta: false, BodyOccupancy: 180 },
-      'Ammonite (Planispiral)':  { logW: 0.4,  D: 1.0, T: 0.0, S: 0.8, startRevs: -1.0, ontogenyRevs: 6.0,  showSepta: true,  BodyOccupancy: 180 },
-      'Epitonium (Open Coil)':   { logW: 0.11, D: 2.5, T: 2.0, S: 1.0, startRevs: -0.6, ontogenyRevs: 7.0,  showSepta: false, BodyOccupancy: 180 }
+      'Turritella (High-Spire)': { logW: 0.06, D: 1.1, T: 3.5, S: 1.0, startRevs: -0.5, ontogenyRevs: 12.0, showGrowthLines: true, showSepta: false, BodyOccupancy: 180 },
+      'Conus (Low-Spire)':       { logW: 0.15, D: 1.0, T: 0.5, S: 1.0, startRevs: -0.5, ontogenyRevs: 6.0,  showGrowthLines: true, showSepta: false, BodyOccupancy: 180 },
+      'Bivalve (Clam)':          { logW: 3.0,  D: 1.0, T: 0.0, S: 0.9, startRevs: -0.1,ontogenyRevs: 0.3,  showGrowthLines: true, showSepta: false, BodyOccupancy: 180 },
+      'Ammonite (Planispiral)':  { logW: 0.4,  D: 2.0, T: 0.0, S: 0.7, startRevs: 0.0, ontogenyRevs: 4.0,  showGrowthLines: true, showSepta: true,  BodyOccupancy: 180 },
+      'Epitonium (Open Coil)':   { logW: 0.11, D: 2.5, T: 2.0, S: 1.0, startRevs: -0.6, ontogenyRevs: 7.0,  showGrowthLines: true, showSepta: false, BodyOccupancy: 180 }
     };
 
     function clamp(key, val) {
@@ -160,6 +179,7 @@
       params.D = clamp('D', params.D);
       params.T = clamp('T', params.T);
       params.S = clamp('S', params.S);
+      params.growthLineSpacing = clamp('growthLineSpacing', params.growthLineSpacing);
       params.septaSpacing = clamp('septaSpacing', params.septaSpacing);
       params.BodyOccupancy = clamp('BodyOccupancy', params.BodyOccupancy);
       params.startRevs = clamp('startRevs', params.startRevs);
@@ -168,14 +188,29 @@
       if (params.ontogenyRevs < params.startRevs) params.ontogenyRevs = params.startRevs;
     }
 
+    function updateLighting() {
+      if (params.useHeadlight) {
+        hemi.visible = false;
+        dir.visible = false;
+        headlight.visible = true;
+        ambientForHeadlight.visible = true;
+      } else {
+        hemi.visible = true;
+        dir.visible = true;
+        headlight.visible = false;
+        ambientForHeadlight.visible = false;
+      }
+    }
+    updateLighting(); // Apply initial state
+
     // -----------------------------
-    // Morphospace inset (secondary scene + separate renderer)
+    // Morphospace inset (secondary scene)
     // -----------------------------
     const morphScene = new THREE.Scene();
     morphScene.background = new THREE.Color(0x0f0f0f);
 
     const morphCamera = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
-    morphCamera.position.set(2.2, 1.8, 2.6);
+    morphCamera.position.set(3.8, 3.2, 4.4); // Start zoomed out
     morphCamera.lookAt(0, 0, 0);
 
     morphScene.add(new THREE.AmbientLight(0xffffff, 0.9));
@@ -239,12 +274,11 @@
       const sprite = new THREE.Sprite(material);
 
       sprite.renderOrder = 999;
-
       sprite.scale.set(scale * (canvas.width / canvas.height), scale, 1);
       return sprite;
     }
 
-    // Axis labels (smaller)
+    // Axis labels
     const labelLogW = makeTextSprite('logW', { fontSize: 34, padding: 10, color: 'rgba(255,255,255,0.92)', scale: 0.42 });
     const labelD    = makeTextSprite('D',    { fontSize: 34, padding: 10, color: 'rgba(255,255,255,0.92)', scale: 0.42 });
     const labelT    = makeTextSprite('T',    { fontSize: 34, padding: 10, color: 'rgba(255,255,255,0.92)', scale: 0.42 });
@@ -279,7 +313,6 @@
 
       Object.entries(presets).forEach(([name, p], idx) => {
         const pos = pointFromParams(p);
-
         const dot = new THREE.Mesh(dotGeom, new THREE.MeshBasicMaterial({ color: 0xffcc66 }));
         dot.position.copy(pos);
 
@@ -291,7 +324,6 @@
           .replace(' (Planispiral)', '')
           .replace(' (Open Coil)', '');
 
-        // smaller labels + slightly different offsets to reduce collisions
         const spr = makeTextSprite(shortName, { fontSize: 28, padding: 10, scale: 0.34 });
         const jitter = (idx % 3) * 0.03;
         spr.position.copy(pos.clone().add(new THREE.Vector3(0.10 + jitter, 0.06, 0.08 - jitter)));
@@ -307,21 +339,21 @@
     rebuildPresetPoints();
     updateMorphospacePoint();
 
-    // Create inset renderer canvas (separate)
+    // Create inset renderer canvas
     const insetRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     insetRenderer.domElement.id = 'morphInset';
     insetRenderer.setClearColor(0x0f0f0f, 1);
     insetRenderer.outputColorSpace = THREE.SRGBColorSpace;
     document.body.appendChild(insetRenderer.domElement);
 
-    // Orbit controls for inset (drag to rotate)
+    // Orbit controls for inset
     const morphControls = new OrbitControls(morphCamera, insetRenderer.domElement);
     morphControls.enableDamping = true;
     morphControls.dampingFactor = 0.08;
     morphControls.enablePan = false;
     morphControls.enableZoom = true;
     morphControls.minDistance = 1.6;
-    morphControls.maxDistance = 6.0;
+    morphControls.maxDistance = 10.0;
     morphControls.target.set(0, 0, 0);
     morphControls.update();
 
@@ -337,12 +369,13 @@
     resizeInset();
 
     // -----------------------------
-    // Shell model (v2.5 logic)
+    // Shell model logic
     // -----------------------------
     let shellMesh = null;
-    let comMarker = null;
     const septaGroup = new THREE.Group();
+    const growthLineGroup = new THREE.Group();
     scene.add(septaGroup);
+    scene.add(growthLineGroup);
 
     function disposeMesh(obj) {
       if (!obj) return;
@@ -354,8 +387,7 @@
     }
     function clearGroup(g) {
       while (g.children.length > 0) {
-        const child = g.children.pop();
-        disposeMesh(child);
+        disposeMesh(g.children.pop());
       }
     }
 
@@ -383,13 +415,12 @@
           child.material.needsUpdate = true;
         }
       }
-    }
-
-    function softBodyWeight(thetaDegAbs, bodyStartDegAbs, bodyEndDegAbs) {
-      const occ = Math.max(1e-6, bodyEndDegAbs - bodyStartDegAbs);
-      const f = (thetaDegAbs - bodyStartDegAbs) / occ;
-      const ff = Math.min(1, Math.max(0, f));
-      return 0.15 + 0.85 * Math.pow(ff, 2.0);
+      for (const child of growthLineGroup.children) {
+        if (child.material) {
+          child.material.color.set(params.growthLineColor);
+          child.material.needsUpdate = true;
+        }
+      }
     }
 
     function updateModel(preview = false, endRevsOverride = null) {
@@ -399,8 +430,8 @@
       const endRevs = (endRevsOverride === null) ? params.ontogenyRevs : endRevsOverride;
 
       if (shellMesh) { scene.remove(shellMesh); disposeMesh(shellMesh); shellMesh = null; }
-      if (comMarker) { scene.remove(comMarker); disposeMesh(comMarker); comMarker = null; }
       clearGroup(septaGroup);
+      clearGroup(growthLineGroup);
 
       const W = Math.pow(10, params.logW);
       document.getElementById('wReadout').textContent = `W = ${W.toFixed(3)} (logW=${params.logW.toFixed(2)})`;
@@ -418,21 +449,14 @@
       const vertices = new Float32Array(vertCount * 3);
       const indices = new Uint32Array(segTheta * segPhi * 6);
 
-      let sumX = 0, sumY = 0, sumZ = 0, sumWgt = 0;
-      let maxR = 1;
-
-      const endDegAbs = 360 * endRevs;
       const effectiveBodyOcc = Math.min(params.BodyOccupancy, Math.max(0, (360 * revSpan) - 5));
-      const bodyStartDegAbs = endDegAbs - effectiveBodyOcc;
 
       let v = 0;
       for (let i = 0; i <= segTheta; i++) {
         const t = i / segTheta;
         const theta = theta0 + t * (theta1 - theta0);
         const r = Math.pow(W, theta / (2 * Math.PI));
-        if (r > maxR) maxR = r;
 
-        const thetaDegAbs = 360 * (theta / (2 * Math.PI));
         const cosT = Math.cos(theta);
         const sinT = Math.sin(theta);
         const zSpire = params.T * r * (theta / (2 * Math.PI));
@@ -452,12 +476,6 @@
           vertices[v++] = x;
           vertices[v++] = y;
           vertices[v++] = z;
-
-          if (params.showCenterOfMass && thetaDegAbs >= bodyStartDegAbs) {
-            const wgt = softBodyWeight(thetaDegAbs, bodyStartDegAbs, endDegAbs);
-            sumX += wgt * x; sumY += wgt * y; sumZ += wgt * z;
-            sumWgt += wgt;
-          }
         }
       }
 
@@ -494,6 +512,34 @@
       shellMesh = new THREE.Mesh(geom, shellMat);
       scene.add(shellMesh);
 
+      // --- Draw Growth Lines ---
+      if (params.showGrowthLines) {
+        const glMat = new THREE.LineBasicMaterial({ color: params.growthLineColor, transparent: true, opacity: 0.65 });
+        const glSpacingRad = (params.growthLineSpacing * Math.PI) / 180;
+        
+        for (let theta = theta0; theta <= theta1; theta += glSpacingRad) {
+          const r = Math.pow(W, theta / (2 * Math.PI));
+          const cosT = Math.cos(theta);
+          const sinT = Math.sin(theta);
+          const zSpire = params.T * r * (theta / (2 * Math.PI));
+
+          const glVerts = new Float32Array((segPhi + 1) * 3);
+          let gv = 0;
+          for (let j = 0; j <= segPhi; j++) {
+            const phi = (j / segPhi) * Math.PI * 2;
+            const x_a = Math.cos(phi) * r;
+            const y_a = Math.sin(phi) * r * params.S;
+            glVerts[gv++] = (x_a + params.D * r) * cosT;
+            glVerts[gv++] = (x_a + params.D * r) * sinT;
+            glVerts[gv++] = y_a + zSpire;
+          }
+          const glGeom = new THREE.BufferGeometry();
+          glGeom.setAttribute('position', new THREE.BufferAttribute(glVerts, 3));
+          growthLineGroup.add(new THREE.Line(glGeom, glMat));
+        }
+      }
+
+      // --- Draw Septa ---
       if (params.showSepta) {
         const spacingRad = (params.septaSpacing * Math.PI) / 180;
         const limitThetaAbs = theta1 - (effectiveBodyOcc * Math.PI / 180);
@@ -549,26 +595,6 @@
           septaGroup.add(new THREE.Mesh(sGeom, sMat));
         }
       }
-
-      if (params.showCenterOfMass && sumWgt > 0) {
-        const comX = sumX / sumWgt;
-        const comY = sumY / sumWgt;
-        const comZ = sumZ / sumWgt;
-
-        const comGeom = new THREE.SphereGeometry(maxR * 0.05, 24, 16);
-        const comMat = new THREE.MeshStandardMaterial({
-          color: 0x00ccff,
-          emissive: 0x0044ff,
-          emissiveIntensity: 0.7,
-          roughness: 0.4,
-          metalness: 0.0
-        });
-        comMarker = new THREE.Mesh(comGeom, comMat);
-        comMarker.position.set(comX, comY, comZ);
-        scene.add(comMarker);
-      }
-
-      updateMorphospacePoint();
     }
 
     function frameModel() {
@@ -584,13 +610,16 @@
       const fov = THREE.MathUtils.degToRad(camera.fov);
       const dist = radius / Math.sin(fov / 2);
 
+      // Reset camera orientation up vector and update trackball constraints
+      camera.up.set(0, 1, 0); 
       controls.target.copy(center);
       camera.position.copy(center.clone().add(viewDir.multiplyScalar(dist * 1.20)));
+      camera.lookAt(center);
 
       camera.near = Math.max(0.1, dist / 200);
       camera.far  = Math.max(2000, dist * 12);
       camera.updateProjectionMatrix();
-      controls.update();
+      controls.update(); // Re-sync TrackballControls with new up axis
     }
 
     function downloadPNG() {
@@ -631,7 +660,9 @@
     const cT    = mf.add(params, 'T',    CLAMPS.T[0],    CLAMPS.T[1]).name('T (Spire Height)');
     const cS    = mf.add(params, 'S',    CLAMPS.S[0],    CLAMPS.S[1]).name('S (Shape)');
 
-    const s = gui.addFolder('Internal Architecture');
+    const s = gui.addFolder('Surface & Architecture');
+    const cGrowth = s.add(params, 'showGrowthLines').name('Show Growth Lines');
+    const cGSpace = s.add(params, 'growthLineSpacing', CLAMPS.growthLineSpacing[0], CLAMPS.growthLineSpacing[1], 1).name('Growth line spacing (°)');
     const cSepta = s.add(params, 'showSepta').name('Show Septa');
     const cSpace = s.add(params, 'septaSpacing', CLAMPS.septaSpacing[0], CLAMPS.septaSpacing[1], 1).name('Septa spacing (°)');
 
@@ -639,7 +670,6 @@
     const cStart = b.add(params, 'startRevs', CLAMPS.startRevs[0], CLAMPS.startRevs[1], 0.05).name('Start revs');
     const cEnd   = b.add(params, 'ontogenyRevs', CLAMPS.ontogenyRevs[0], CLAMPS.ontogenyRevs[1], 0.05).name('Ontogeny (end revs)');
     b.add(params, 'BodyOccupancy', { '90°': 90, '180°': 180 }).name('Living chamber (°)');
-    const cCOM   = b.add(params, 'showCenterOfMass').name('Show Center of Mass');
     b.add({ 'Animate ontogeny': animateOntogenyStart }, 'Animate ontogeny');
     b.add({ 'Stop animation': animateOntogenyStop }, 'Stop animation');
     b.add(params, 'animSpeed', CLAMPS.animSpeed[0], CLAMPS.animSpeed[1], 0.1).name('Anim speed (rev/s)');
@@ -647,9 +677,11 @@
     const disp = gui.addFolder('Display');
     const cExterior = disp.add(params, 'exterior', ['Solid', 'Wireframe']).name('Exterior');
     const cShellCol = disp.addColor(params, 'shellColor').name('Shell color');
+    const cGrowthCol= disp.addColor(params, 'growthLineColor').name('Growth line color');
     const cSeptaCol = disp.addColor(params, 'septaColor').name('Septa color');
 
     const view = gui.addFolder('View');
+    view.add(params, 'useHeadlight').name('Headlight').onChange(updateLighting);
     view.add(params, 'showAxes').name('Axes').onChange(() => { axesHelper.visible = !!params.showAxes; });
     view.add(params, 'showGrid').name('Grid').onChange(() => { gridHelper.visible = !!params.showGrid; });
     view.add({ Frame: frameModel }, 'Frame');
@@ -658,17 +690,31 @@
     axesHelper.visible = true;
     gridHelper.visible = true;
 
-    function wireDrag(controller) {
-      controller.onChange(() => { isDragging = true; if (!isAnimating) updateModel(true); });
-      controller.onFinishChange(() => { isDragging = false; if (!isAnimating) updateModel(false); });
+    // Single unified wire Drag callback to prevent multiple onChange collisions
+    function wireDrag(controller, updatesMorph) {
+      controller.onChange(() => { 
+        isDragging = true; 
+        if (!isAnimating) updateModel(true); 
+        if (updatesMorph) updateMorphospacePoint();
+      });
+      controller.onFinishChange(() => { 
+        isDragging = false; 
+        if (!isAnimating) updateModel(false); 
+        if (updatesMorph) updateMorphospacePoint();
+      });
     }
-    [cLogW, cD, cT, cS, cSpace, cStart, cEnd].forEach(wireDrag);
 
-    [cSepta, cCOM, cExterior].forEach(c => c.onChange(() => { if (!isAnimating) updateModel(isDragging); }));
-    [cShellCol, cSeptaCol].forEach(c => c.onChange(() => applyColorsImmediately()));
+    wireDrag(cLogW, true);
+    wireDrag(cD, true);
+    wireDrag(cT, true);
+    wireDrag(cS, false);
+    wireDrag(cGSpace, false);
+    wireDrag(cSpace, false);
+    wireDrag(cStart, false);
+    wireDrag(cEnd, false);
 
-    // Keep inset dot responsive
-    [cLogW, cD, cT].forEach(c => c.onChange(() => updateMorphospacePoint()));
+    [cGrowth, cSepta, cExterior].forEach(c => c.onChange(() => { if (!isAnimating) updateModel(isDragging); }));
+    [cShellCol, cGrowthCol, cSeptaCol].forEach(c => c.onChange(() => applyColorsImmediately()));
 
     updateModel(false);
     frameModel();
@@ -678,6 +724,7 @@
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      controls.handleResize(); // Required by TrackballControls on resize
       resizeInset();
     }
     window.addEventListener('resize', resizeMain);
